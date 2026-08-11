@@ -1,66 +1,68 @@
 # GNN
 
-Reusable graph neural network components for GraphVAE. The first implementation
-follows the GraphVAE encoder: edge-conditioned convolution (ECC), residual
-connections, batch normalization, ReLU, and gated global pooling.
+Reusable padding-free ECC and gated graph pooling implemented with PyTorch. ECC
+can run through either the native PyTorch implementation or PyG's `NNConv`;
+both use a linear edge filter, mean aggregation, an external residual,
+BatchNorm and ReLU.
 
 ## Requirements
 
-- Python 3.10+
-- PyTorch
-- RDKit (QM9 example only)
+- `torch`
+- `torch-geometric`
 
-Install versions that match your operating system and CUDA environment.
-PyTorch Geometric is not required. An optional adapter is provided for callers
-that already use PyG data objects.
+## Structure
 
-## Public interface
-
-```python
-from graph_neural_networks import ECCConv, GatedGlobalPooling, GraphEncoder
-from graph_neural_networks import ECCGraphEncoder
-
-encoder = ECCGraphEncoder(
-    node_feature_dim=4,
-    edge_feature_dim=4,
-    channels=(32, 64),
-    graph_embedding_dim=128,
-)
-
-embedding = encoder(A, E, X, node_mask)  # [batch, 128]
+```text
+graph_neural_networks/
+├── core/
+│   ├── smiles_input.py  # download and cache heavy-atom QM9 graphs
+│   ├── ECC.py           # compatible native and PyG ECC backends
+│   └── Pooling.py       # gated pooling over real nodes
+└── example/QM9/
+    └── Predict_property.py
 ```
 
-The dense input convention is:
+## ECC parameters
 
-- `A`: `[batch, nodes, nodes]`, where `A[:, i, j]` is edge `j -> i`
-- `E`: `[batch, nodes, nodes, edge_features]`
-- `X`: `[batch, nodes, node_features]`
-- `node_mask`: `[batch, nodes]`
+- `node_feature_dim`: input node-vector length
+- `edge_feature_dim`: input edge-vector length
+- `channels`: ECC widths; its length is the number of ECC layers
+- `backend`: `"native"` or `"pyg"`
+- `graph_embedding_dim`: gated pooling output length
 
-`GraphEncoder` accepts any message-passing layers exposing `in_channels`,
-`out_channels`, and the same dense forward signature. It also accepts a
-replaceable pooling module. An optional graph condition can be concatenated to
-every node immediately before pooling.
+```python
+from graph_neural_networks import ECC, GatedGlobalPooling
+
+ecc = ECC(4, 4, channels=(32, 64), backend="native")
+pooling = GatedGlobalPooling(64, graph_embedding_dim=128)
+
+nodes = ecc(data.x, data.edge_attr, edge_index=data.edge_index)
+graph_embedding = pooling(nodes, batch=data.batch)
+```
 
 ## QM9 example
 
-Show all parameters:
+On the first run, `smiles_input.py` downloads QM9, removes hydrogen, prepares
+the C/N/O/F graphs and caches them as `processed/qm9_heavy_atoms.pt`. Training
+epochs only read this prepared data.
 
 ```bash
-python3 -m graph_neural_networks.example_trainers.qm9_regression --help
+python3 -m graph_neural_networks.example.QM9.Predict_property \
+  --backend pyg \
+  --property mu \
+  --channels 32 64 \
+  --embedding-dim 128 \
+  --epochs 100 \
+  --batch-size 64 \
+  --eval-batch-size 20 \
+  --learning-rate 0.0001 \
+  --num-workers 0 \
+  --seed 56145612
 ```
 
-Train the GraphVAE-style encoder to predict molecular dipole moment:
+Use `--backend native` or `--backend pyg`; neither backend pads nodes. On an HPC
+server, the command may need an `sbatch` or `job.sh` file.
 
-```bash
-python3 -m graph_neural_networks.example_trainers.qm9_regression \
-  --device cuda \
-  --epochs 25 \
-  --batch-size 32 \
-  --learning-rate 0.001
-```
-
-The main options control the ECC channel widths, graph embedding size, optimizer,
-dataset directory, output directory, data split sizes, random seed, and device.
-If running on an HPC server, the command may need to be placed in a Slurm
-`sbatch` file or another cluster-specific script such as `job.sh`.
+The target is the dipole moment `mu` in Debye. Validation also reports
+`MAE / 0.066513725`, the chemically normalized MAE used by the reference
+example.

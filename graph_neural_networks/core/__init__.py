@@ -1,13 +1,17 @@
-"""Shared graph validation, encoder composition, and pooling."""
+"""Public GNN building blocks."""
 
-from .encoder import GraphEncoder
-from .graph import MaskedBatchNorm1d, validate_dense_graph
-from .pooling import GatedGlobalPooling
+from .ECC import ECC, ECCLayer, NativeECCLayer, PyGECCLayer, adjacency_to_edges
+from .Pooling import GatedGlobalPooling
+from .smiles_input import PreparedQM9, prepare_qm9, qm9_heavy_atom_transform
 
 __all__ = [
+    "ECC",
+    "ECCLayer",
+    "NativeECCLayer",
+    "PyGECCLayer",
     "GatedGlobalPooling",
-    "GraphEncoder",
-    "MaskedBatchNorm1d",
-    "validate_dense_graph",
+    "PreparedQM9",
+    "qm9_heavy_atom_transform",
+    "prepare_qm9",
+    "adjacency_to_edges",
 ]
-

@@ -1,7 +1,25 @@
-"""Public interface for reusable dense graph encoders."""
+"""Small, reusable graph neural network building blocks."""
 
-from .core import GatedGlobalPooling, GraphEncoder
-from .ecc import ECCConv, ECCGraphEncoder
+from .core import (
+    ECC,
+    ECCLayer,
+    NativeECCLayer,
+    PreparedQM9,
+    GatedGlobalPooling,
+    PyGECCLayer,
+    qm9_heavy_atom_transform,
+    prepare_qm9,
+    adjacency_to_edges,
+)
 
-__all__ = ["ECCConv", "ECCGraphEncoder", "GatedGlobalPooling", "GraphEncoder"]
-
+__all__ = [
+    "ECC",
+    "ECCLayer",
+    "NativeECCLayer",
+    "PreparedQM9",
+    "PyGECCLayer",
+    "GatedGlobalPooling",
+    "qm9_heavy_atom_transform",
+    "prepare_qm9",
+    "adjacency_to_edges",
+]
