@@ -63,6 +63,7 @@ python3 -m graph_neural_networks.example.QM9.Predict_property \
 Use `--backend native` or `--backend pyg`; neither backend pads nodes. On an HPC
 server, the command may need an `sbatch` or `job.sh` file.
 
-The target is the dipole moment `mu` in Debye. Validation also reports
-`MAE / 0.066513725`, the chemically normalized MAE used by the reference
-example.
+The dipole moment `mu` is standardized with the training-set mean and standard
+deviation before optimization. Validation also reports normalized-target MAE
+divided by `0.066513725`, matching the chemically normalized MAE used by the
+reference example; Debye MAE is recorded separately.

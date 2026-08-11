@@ -18,7 +18,7 @@ QM9_TARGETS = (
     "a", "b", "c",
 )
 
-CHEMICAL_ACCURACY_DEBYE = 0.066513725
+CHEMICAL_ACCURACY_NORMALIZED = 0.066513725
 
 
 class PropertyPredictor(nn.Module):
@@ -72,31 +72,38 @@ def arguments():
     return parser.parse_args()
 
 
-def run_epoch(model, loader, target_index, device, optimizer=None):
+def run_epoch(model, loader, target_index, mean, std, device, optimizer=None):
     model.train(optimizer is not None)
-    squared_error = absolute_error = 0.0
+    squared_error = normalized_absolute_error = 0.0
     count = 0
     with torch.set_grad_enabled(optimizer is not None):
         for data in loader:
             data = data.to(device)
             target = data.y[:, target_index]
+            normalized_target = (target - mean) / std
             if optimizer is not None:
                 optimizer.zero_grad(set_to_none=True)
             prediction = model(data)
-            loss = nn.functional.mse_loss(prediction, target)
+            loss = nn.functional.mse_loss(prediction, normalized_target)
             if optimizer is not None:
                 loss.backward()
                 optimizer.step()
             squared_error += nn.functional.mse_loss(
-                prediction, target, reduction="sum"
+                prediction, normalized_target, reduction="sum"
             ).item()
-            absolute_error += nn.functional.l1_loss(
-                prediction, target, reduction="sum"
+            normalized_absolute_error += nn.functional.l1_loss(
+                prediction, normalized_target, reduction="sum"
             ).item()
             count += target.numel()
     mse = squared_error / count
-    mae_debye = absolute_error / count
-    return mse, mae_debye, mae_debye / CHEMICAL_ACCURACY_DEBYE
+    mae_normalized = normalized_absolute_error / count
+    mae_debye = mae_normalized * std.item()
+    return (
+        mse,
+        mae_normalized,
+        mae_debye,
+        mae_normalized / CHEMICAL_ACCURACY_NORMALIZED,
+    )
 
 
 def main():
@@ -120,6 +127,9 @@ def main():
     valid_indices = order[args.test_size : args.test_size + args.validation_size]
     train_indices = order[args.test_size + args.validation_size :]
     target_index = QM9_TARGETS.index(args.property)
+    train_targets = dataset.y[train_indices, target_index]
+    mean = train_targets.mean().to(device)
+    std = train_targets.std(unbiased=False).clamp_min(1e-8).to(device)
     common_loader_args = dict(
         num_workers=args.num_workers,
         pin_memory=device.type == "cuda",
@@ -163,37 +173,43 @@ def main():
         writer.writerow(
             [
                 "epoch",
-                "train_mse_debye2",
+                "train_mse_normalized",
+                "train_mae_normalized",
                 "train_mae_debye",
                 "train_mae_chemical_normalized",
-                "valid_mse_debye2",
+                "valid_mse_normalized",
+                "valid_mae_normalized",
                 "valid_mae_debye",
                 "valid_mae_chemical_normalized",
             ]
         )
-        initial_valid = run_epoch(model, valid_loader, target_index, device)
-        writer.writerow([0, "", "", "", initial_valid[0], initial_valid[1], initial_valid[2]])
+        initial_valid = run_epoch(model, valid_loader, target_index, mean, std, device)
+        writer.writerow([0, "", "", "", "", *initial_valid])
         handle.flush()
         print(
-            f"epoch=000 valid_mse_D2={initial_valid[0]:.6f} "
-            f"valid_mae_D={initial_valid[1]:.6f} "
-            f"valid_mae_chemical={initial_valid[2]:.6f}",
+            f"epoch=000 valid_mse_norm={initial_valid[0]:.6f} "
+            f"valid_mae_norm={initial_valid[1]:.6f} "
+            f"valid_mae_D={initial_valid[2]:.6f} "
+            f"valid_mae_chemical={initial_valid[3]:.6f}",
             flush=True,
         )
         for epoch in range(1, args.epochs + 1):
-            train = run_epoch(model, train_loader, target_index, device, optimizer)
-            valid = run_epoch(model, valid_loader, target_index, device)
+            train = run_epoch(
+                model, train_loader, target_index, mean, std, device, optimizer
+            )
+            valid = run_epoch(model, valid_loader, target_index, mean, std, device)
             writer.writerow([epoch, *train, *valid])
             handle.flush()
             print(
-                f"epoch={epoch:03d} train_mse_D2={train[0]:.6f} "
-                f"train_mae_D={train[1]:.6f} "
-                f"valid_mse_D2={valid[0]:.6f} valid_mae_D={valid[1]:.6f} "
-                f"valid_mae_chemical={valid[2]:.6f}",
+                f"epoch={epoch:03d} train_mse_norm={train[0]:.6f} "
+                f"train_mae_norm={train[1]:.6f} "
+                f"valid_mse_norm={valid[0]:.6f} "
+                f"valid_mae_norm={valid[1]:.6f} valid_mae_D={valid[2]:.6f} "
+                f"valid_mae_chemical={valid[3]:.6f}",
                 flush=True,
             )
 
-    test = run_epoch(model, test_loader, target_index, device)
+    test = run_epoch(model, test_loader, target_index, mean, std, device)
     torch.save(
         {
             "model_state_dict": model.state_dict(),
@@ -201,18 +217,21 @@ def main():
             "channels": args.channels,
             "embedding_dim": args.embedding_dim,
             "property": args.property,
-            "chemical_accuracy_debye": CHEMICAL_ACCURACY_DEBYE,
-            "test_mse_debye2": test[0],
-            "test_mae_debye": test[1],
-            "test_mae_chemical_normalized": test[2],
+            "target_mean": mean.item(),
+            "target_std": std.item(),
+            "chemical_accuracy_normalized": CHEMICAL_ACCURACY_NORMALIZED,
+            "test_mse_normalized": test[0],
+            "test_mae_normalized": test[1],
+            "test_mae_debye": test[2],
+            "test_mae_chemical_normalized": test[3],
             "config": {key: str(value) if isinstance(value, Path) else value
                        for key, value in vars(args).items()},
         },
         args.output_dir / "model.pt",
     )
     print(
-        f"test_mse_D2={test[0]:.6f} test_mae_D={test[1]:.6f} "
-        f"test_mae_chemical={test[2]:.6f}"
+        f"test_mse_norm={test[0]:.6f} test_mae_norm={test[1]:.6f} "
+        f"test_mae_D={test[2]:.6f} test_mae_chemical={test[3]:.6f}"
     )
 
 
